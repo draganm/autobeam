@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 
@@ -171,6 +172,7 @@ func main() {
 				semverTags = append(semverTags, semver.MustParse("v0.0.0"))
 			}
 
+			// 7. Increment the version
 			sort.Sort(semverTags)
 
 			latestVersion := semverTags[len(semverTags)-1]
@@ -190,6 +192,41 @@ func main() {
 			}
 
 			fmt.Println("Next version:", nextVersion)
+
+			// 8. Build the docker image with the new version
+
+			cmd := exec.Command(
+				"docker",
+				"build",
+				"-t", fmt.Sprintf("%s:v%s", beamConfig.DockerImage, nextVersion.String()),
+				".",
+			)
+
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Dir = repoRoot
+
+			err = cmd.Run()
+			if err != nil {
+				return fmt.Errorf("failed to build docker image: %w", err)
+			}
+
+			// 9. Push the new image to the registry
+
+			cmd = exec.Command(
+				"docker",
+				"push",
+				fmt.Sprintf("%s:v%s", beamConfig.DockerImage, nextVersion.String()),
+			)
+
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+
+			err = cmd.Run()
+
+			if err != nil {
+				return fmt.Errorf("failed to push docker image: %w", err)
+			}
 
 			return nil
 
