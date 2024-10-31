@@ -21,12 +21,18 @@ func main() {
 				return fmt.Errorf("failed to get worktree: %w", err)
 			}
 
+			h, err := repo.Head()
+			if err != nil {
+				return fmt.Errorf("failed to get head: %w", err)
+			}
+
+			fmt.Println("Current branch:", h.Name())
+
 			status, err := wt.Status()
 			if err != nil {
 				return fmt.Errorf("failed to get status: %w", err)
 			}
-
-			fmt.Println(status)
+			fmt.Println("is clean", status.IsClean())
 			return nil
 
 		},
