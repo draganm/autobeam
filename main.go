@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/draganm/autobeam/interpolatemanifests"
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -258,6 +259,17 @@ func main() {
 
 			if err != nil {
 				return fmt.Errorf("failed to create branch: %w", err)
+			}
+
+			err = interpolatemanifests.RollOut(
+				filepath.Join(repoRoot, ".autobeam/manifests"),
+				map[string]any{
+					"dockerImage": fmt.Sprintf("%s:v%s", beamConfig.DockerImage, nextVersion.String()),
+				},
+				opsWT.Filesystem,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to interpolate manifests: %w", err)
 			}
 
 			opsWT.Filesystem.MkdirAll("test", 0755)
