@@ -10,4 +10,5 @@ type Config struct {
 	DockerImage string     `yaml:"docker_image"`
 	Branch      string     `yaml:"branch"`
 	GitopsRepo  GitopsRepo `yaml:"gitops_repo"`
+	PRComment   string     `yaml:"pr_comment"`
 }
