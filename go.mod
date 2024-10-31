@@ -1,6 +1,6 @@
 module github.com/draganm/autobeam
 
-go 1.23.1
+go 1.22.6
 
 require (
 	github.com/Masterminds/semver/v3 v3.3.0
