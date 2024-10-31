@@ -7,12 +7,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/urfave/cli/v2"
 
 	"gopkg.in/yaml.v3"
@@ -40,7 +44,6 @@ func main() {
 			// 6. Increment the patch version
 			// 7. Build the docker image with the new version
 			// 8. Push the new image to the registry
-			// 9. Create a new tag with the new version
 			// 10. clone the gitops repo in memory
 			// 11. create a new branch in the gitops repo
 			// 12. generate the new version of manifests
@@ -227,6 +230,68 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("failed to push docker image: %w", err)
 			}
+
+			// 10. clone the gitops repo in memory
+
+			workspace := memfs.New()
+			gitopsRepo, err := git.Clone(memory.NewStorage(), workspace, &git.CloneOptions{
+				URL:           beamConfig.GitopsRepo.RepoURL,
+				ReferenceName: plumbing.NewBranchReferenceName(beamConfig.GitopsRepo.Branch),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to clone gitops repo: %w", err)
+			}
+
+			opsWT, err := gitopsRepo.Worktree()
+			if err != nil {
+				return fmt.Errorf("failed to get worktree: %w", err)
+			}
+
+			// 11. create a new branch in the gitops repo
+
+			branchName := fmt.Sprintf("autobeam/%s/%s", beamConfig.Name, nextVersion.String())
+
+			err = opsWT.Checkout(&git.CheckoutOptions{
+				Branch: plumbing.NewBranchReferenceName(branchName),
+				Create: true,
+			})
+
+			if err != nil {
+				return fmt.Errorf("failed to create branch: %w", err)
+			}
+
+			opsWT.Filesystem.MkdirAll("test", 0755)
+			f, err := opsWT.Filesystem.OpenFile("test/test.txt", os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				return fmt.Errorf("failed to create file: %w", err)
+			}
+			f.Write([]byte("hello world"))
+			f.Close()
+
+			_, err = opsWT.Add(".")
+			if err != nil {
+				return fmt.Errorf("failed to add files: %w", err)
+			}
+
+			_, err = opsWT.Commit("commit message", &git.CommitOptions{
+				Author: &object.Signature{
+					Name:  "autobeam",
+					Email: "autobeam@emal.me",
+					When:  time.Now(),
+				},
+			})
+
+			if err != nil {
+				return fmt.Errorf("failed to commit: %w", err)
+			}
+
+			err = gitopsRepo.Push(&git.PushOptions{})
+
+			if err != nil {
+				return fmt.Errorf("failed to push: %w", err)
+			}
+
+			fmt.Println("working tree", opsWT.Filesystem.Root())
 
 			return nil
 
