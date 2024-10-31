@@ -332,6 +332,27 @@ func main() {
 				return fmt.Errorf("failed to create PR: %w", err)
 			}
 
+			_, err = repo.CreateTag("v"+nextVersion.String(), h.Hash(), &git.CreateTagOptions{
+				Tagger: &object.Signature{
+					Name:  "autobeam",
+					Email: "autobeam@emal.me",
+					When:  time.Now(),
+				},
+				Message: "Release " + nextVersion.String(),
+			})
+
+			if err != nil {
+				return fmt.Errorf("failed to create tag: %w", err)
+			}
+
+			err = repo.Push(&git.PushOptions{
+				FollowTags: true,
+			})
+
+			if err != nil {
+				return fmt.Errorf("failed to push tag: %w", err)
+			}
+
 			return nil
 
 		},
