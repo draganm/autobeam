@@ -3,8 +3,10 @@ module github.com/draganm/autobeam
 go 1.23.1
 
 require (
+	github.com/Masterminds/semver/v3 v3.3.0
 	github.com/go-git/go-git/v5 v5.12.0
 	github.com/urfave/cli/v2 v2.27.5
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
