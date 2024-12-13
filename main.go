@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -199,11 +200,26 @@ func main() {
 
 			// 8. Build the docker image with the new version
 
-			cmd := exec.Command(
-				"docker",
+			buildArgs := []string{
 				"build",
+			}
+
+			if len(beamConfig.Platforms) > 0 {
+				buildArgs = append(
+					buildArgs,
+					"--platform",
+					strings.Join(beamConfig.Platforms, ","),
+				)
+			}
+
+			buildArgs = append(
+				buildArgs,
 				"-t", fmt.Sprintf("%s:v%s", beamConfig.DockerImage, nextVersion.String()),
 				".",
+			)
+			cmd := exec.Command(
+				"docker",
+				buildArgs...,
 			)
 
 			cmd.Stdout = os.Stdout
