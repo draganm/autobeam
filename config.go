@@ -8,6 +8,7 @@ type GitopsRepo struct {
 type Config struct {
 	Name        string     `yaml:"name"`
 	DockerImage string     `yaml:"docker_image"`
+	Platforms   []string   `yaml:"platforms"`
 	Branch      string     `yaml:"branch"`
 	GitopsRepo  GitopsRepo `yaml:"gitops_repo"`
 	PRComment   string     `yaml:"pr_comment"`
