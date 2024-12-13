@@ -91,7 +91,7 @@ func RollOut(
 		}
 
 		if !exists {
-			err := destFS.MkdirAll(manifestPath, 0777)
+			err := destFS.MkdirAll(path.Dir(manifestPath), 0777)
 			if err != nil {
 				return fmt.Errorf("could not mkdir %s: %w", path.Dir(manifestPath), err)
 			}
