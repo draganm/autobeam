@@ -103,100 +103,66 @@ func main() {
 			}
 
 			// 4. Check if the branch in the config file is the same as the current branch
-
 			h, err := repo.Head()
 			if err != nil {
 				return fmt.Errorf("failed to get head: %w", err)
 			}
 
-			if h.Name().Short() != beamConfig.Branch {
-				return fmt.Errorf("current branch %q is not the same as the branch in the config: %q", h.Name().Short(), beamConfig.Branch)
-			}
+			currentBranch := h.Name().Short()
+			isMainBranch := currentBranch == beamConfig.MainBranch
 
-			// 5. Check if current branch is pushed to the remote
+			var imageTag string
+			var nextVersion semver.Version
 
-			remotes, err := repo.Remotes()
-			if err != nil {
-				return fmt.Errorf("failed to list remotes: %w", err)
-			}
-
-			branchPushed := false
-			sshAuth, err := getSSHAgentAuth()
-			if err != nil {
-				return fmt.Errorf("failed to get ssh agent auth: %w", err)
-			}
-
-			for _, remote := range remotes {
-				listOptions := &git.ListOptions{}
-				listOptions.Auth = sshAuth
-				refs, err := remote.List(listOptions)
-				if err != nil {
-					fmt.Printf("Error listing remote refs: %s\n", err)
-					os.Exit(1)
-				}
-
-				for _, ref := range refs {
-					if ref.Name() == h.Name() {
-						branchPushed = true
-						break
-					}
-				}
-				if branchPushed {
-					break
-				}
-			}
-
-			if !branchPushed {
-				return fmt.Errorf("current branch %q is not pushed to the remote", h.Name().Short())
-			}
-
-			// 6. Get the latest semver from tags
-
-			fmt.Println("Current branch:", h.Name())
-
+			// Get tags for versioning
 			tags, err := repo.Tags()
 			if err != nil {
 				return fmt.Errorf("failed to get tags: %w", err)
 			}
 
-			semverTags := semver.Collection{}
-			err = tags.ForEach(func(r *plumbing.Reference) error {
-				v, err := semver.NewVersion(r.Name().Short())
-				if err == nil {
-					semverTags = append(semverTags, v)
+			if isMainBranch {
+				// Handle main branch release with semantic versioning
+				semverTags := semver.Collection{}
+				err = tags.ForEach(func(r *plumbing.Reference) error {
+					v, err := semver.NewVersion(r.Name().Short())
+					if err == nil {
+						semverTags = append(semverTags, v)
+						return nil
+					}
+					log.Println("skipping tag", "tag", r.Name().Short(), "error", err)
 					return nil
+				})
+				if err != nil {
+					return fmt.Errorf("failed to iterate tags: %w", err)
 				}
-				log.Println("skipping tag", "tag", r.Name().Short(), "error", err)
-				return nil
-			})
-			if err != nil {
-				return fmt.Errorf("failed to iterate tags: %w", err)
+
+				if len(semverTags) == 0 {
+					semverTags = append(semverTags, semver.MustParse("v0.0.0"))
+				}
+
+				sort.Sort(semverTags)
+				latestVersion := semverTags[len(semverTags)-1]
+				fmt.Println("Latest version:", latestVersion)
+
+				switch cfg.releaseType {
+				case "major":
+					nextVersion = latestVersion.IncMajor()
+				case "minor":
+					nextVersion = latestVersion.IncMinor()
+				case "patch":
+					nextVersion = latestVersion.IncPatch()
+				default:
+					return fmt.Errorf("invalid release type: %q", cfg.releaseType)
+				}
+
+				imageTag = fmt.Sprintf("v%s", nextVersion.String())
+				fmt.Println("Next version:", nextVersion)
+			} else {
+				// Handle feature branch with timestamp-based versioning
+				timestamp := time.Now().Format("20060102-150405")
+				imageTag = fmt.Sprintf("%s-%s", currentBranch, timestamp)
+				fmt.Printf("Creating feature branch release with tag: %s\n", imageTag)
 			}
-
-			if len(semverTags) == 0 {
-				semverTags = append(semverTags, semver.MustParse("v0.0.0"))
-			}
-
-			// 7. Increment the version
-			sort.Sort(semverTags)
-
-			latestVersion := semverTags[len(semverTags)-1]
-			fmt.Println("Latest version:", latestVersion)
-
-			var nextVersion semver.Version
-
-			switch cfg.releaseType {
-			case "major":
-				nextVersion = latestVersion.IncMajor()
-			case "minor":
-				nextVersion = latestVersion.IncMinor()
-			case "patch":
-				nextVersion = latestVersion.IncPatch()
-			default:
-				return fmt.Errorf("invalid release type: %q", cfg.releaseType)
-			}
-
-			fmt.Println("Next version:", nextVersion)
 
 			// 8. Build the docker image with the new version
 
@@ -214,7 +180,7 @@ func main() {
 
 			buildArgs = append(
 				buildArgs,
-				"-t", fmt.Sprintf("%s:v%s", beamConfig.DockerImage, nextVersion.String()),
+				"-t", fmt.Sprintf("%s:%s", beamConfig.DockerImage, imageTag),
 				".",
 			)
 			cmd := exec.Command(
@@ -236,7 +202,7 @@ func main() {
 			cmd = exec.Command(
 				"docker",
 				"push",
-				fmt.Sprintf("%s:v%s", beamConfig.DockerImage, nextVersion.String()),
+				fmt.Sprintf("%s:%s", beamConfig.DockerImage, imageTag),
 			)
 
 			cmd.Stdout = os.Stdout
@@ -266,7 +232,12 @@ func main() {
 
 			// 11. create a new branch in the gitops repo
 
-			branchName := fmt.Sprintf("autobeam/%s/%s", beamConfig.Name, nextVersion.String())
+			var branchName string
+			if isMainBranch {
+				branchName = fmt.Sprintf("autobeam/%s/%s", beamConfig.Name, nextVersion.String())
+			} else {
+				branchName = fmt.Sprintf("autobeam/%s/%s", beamConfig.Name, imageTag)
+			}
 
 			err = opsWT.Checkout(&git.CheckoutOptions{
 				Branch: plumbing.NewBranchReferenceName(branchName),
@@ -280,7 +251,7 @@ func main() {
 			err = interpolatemanifests.RollOut(
 				filepath.Join(repoRoot, ".autobeam/manifests"),
 				map[string]any{
-					"dockerImage": fmt.Sprintf("%s:v%s", beamConfig.DockerImage, nextVersion.String()),
+					"dockerImage": fmt.Sprintf("%s:%s", beamConfig.DockerImage, imageTag),
 				},
 				opsWT.Filesystem,
 			)
@@ -348,25 +319,28 @@ func main() {
 				return fmt.Errorf("failed to create PR: %w", err)
 			}
 
-			_, err = repo.CreateTag("v"+nextVersion.String(), h.Hash(), &git.CreateTagOptions{
-				Tagger: &object.Signature{
-					Name:  "autobeam",
-					Email: "autobeam@emal.me",
-					When:  time.Now(),
-				},
-				Message: "Release " + nextVersion.String(),
-			})
+			// Only create tag in main repo if on main branch
+			if isMainBranch {
+				_, err = repo.CreateTag("v"+nextVersion.String(), h.Hash(), &git.CreateTagOptions{
+					Tagger: &object.Signature{
+						Name:  "autobeam",
+						Email: "autobeam@emal.me",
+						When:  time.Now(),
+					},
+					Message: "Release " + nextVersion.String(),
+				})
 
-			if err != nil {
-				return fmt.Errorf("failed to create tag: %w", err)
-			}
+				if err != nil {
+					return fmt.Errorf("failed to create tag: %w", err)
+				}
 
-			err = repo.Push(&git.PushOptions{
-				FollowTags: true,
-			})
+				err = repo.Push(&git.PushOptions{
+					FollowTags: true,
+				})
 
-			if err != nil {
-				return fmt.Errorf("failed to push tag: %w", err)
+				if err != nil {
+					return fmt.Errorf("failed to push tag: %w", err)
+				}
 			}
 
 			return nil
