@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -162,6 +163,99 @@ func main() {
 				timestamp := time.Now().Format("20060102-150405")
 				imageTag = fmt.Sprintf("%s-%s", currentBranch, timestamp)
 				fmt.Printf("Creating feature branch release with tag: %s\n", imageTag)
+			}
+
+			// Check and handle go.mod replace statements
+			goModPath := filepath.Join(repoRoot, "go.mod")
+			_, err = os.Stat(goModPath)
+			if err == nil {
+				// Save original go.mod content
+				originalGoMod, err := os.ReadFile(goModPath)
+				if err != nil {
+					return fmt.Errorf("failed to read original go.mod: %w", err)
+				}
+
+				// Ensure we restore go.mod regardless of what happens
+				defer func() {
+					err := os.WriteFile(goModPath, originalGoMod, 0644)
+					if err != nil {
+						log.Printf("WARNING: failed to restore go.mod: %v", err)
+					} else {
+						fmt.Println("Restored original go.mod file")
+					}
+
+					// Run go mod tidy to ensure go.sum is in sync
+					cmd := exec.Command("go", "mod", "tidy")
+					cmd.Dir = repoRoot
+					if err := cmd.Run(); err != nil {
+						log.Printf("WARNING: failed to tidy go.mod after restore: %v", err)
+					}
+				}()
+
+				// Get go.mod content in JSON format
+				cmd := exec.Command("go", "mod", "edit", "-json")
+				cmd.Dir = repoRoot
+				output, err := cmd.Output()
+				if err != nil {
+					return fmt.Errorf("failed to get go.mod json: %w", err)
+				}
+
+				// Parse the JSON output
+				var goMod struct {
+					Module struct {
+						Path string `json:"Path"`
+					} `json:"Module"`
+					Replace []struct {
+						Old struct {
+							Path string `json:"Path"`
+						} `json:"Old"`
+						New struct {
+							Path string `json:"Path"`
+						} `json:"New"`
+					} `json:"Replace"`
+				}
+
+				if err := json.Unmarshal(output, &goMod); err != nil {
+					return fmt.Errorf("failed to parse go.mod json: %w", err)
+				}
+
+				// If there are replace directives
+				if len(goMod.Replace) > 0 {
+					fmt.Printf("Found %d replace statements in go.mod, handling them...\n", len(goMod.Replace))
+
+					// Drop all replace statements
+					cmd = exec.Command("go", "mod", "edit", "-dropreplace")
+					cmd.Dir = repoRoot
+					cmd.Stdout = os.Stdout
+					cmd.Stderr = os.Stderr
+					if err := cmd.Run(); err != nil {
+						return fmt.Errorf("failed to drop replace statements: %w", err)
+					}
+
+					// Update each replaced module to @latest
+					for _, replace := range goMod.Replace {
+						modulePath := replace.Old.Path
+						if modulePath != "" && !strings.Contains(modulePath, "internal") {
+							fmt.Printf("Updating module %s to @latest\n", modulePath)
+							cmd = exec.Command("go", "mod", "edit", "-require", modulePath+"@latest")
+							cmd.Dir = repoRoot
+							cmd.Stdout = os.Stdout
+							cmd.Stderr = os.Stderr
+							if err := cmd.Run(); err != nil {
+								return fmt.Errorf("failed to update module %s to @latest: %w", modulePath, err)
+							}
+						}
+					}
+
+					// Tidy up the go.mod
+					cmd = exec.Command("go", "mod", "tidy")
+					cmd.Dir = repoRoot
+					cmd.Stdout = os.Stdout
+					cmd.Stderr = os.Stderr
+					if err := cmd.Run(); err != nil {
+						return fmt.Errorf("failed to tidy go.mod: %w", err)
+					}
+				}
 			}
 
 			// 8. Build the docker image with the new version
